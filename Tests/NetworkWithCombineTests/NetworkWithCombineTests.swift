@@ -5,46 +5,36 @@ import Combine
 final class NetworkWithCombineTests: XCTestCase {
     var cancellables = [AnyCancellable]()
     
-    func testNetworkWithExpectionLoading() throws {
-        let expectation = XCTestExpectation(description: "calling network")
-        Task {
-            let nw: NetworkManager<Product> = NetworkManager(apiHandler: MockAPIHandler(), responseHandler: MockResponseHandler())
-            let t: AnyPublisher<Product, any Error> = await nw.getData(urlstr: "https://dummyjson.com/products/1")
-            t.sink(receiveCompletion: { error in
-                print(error)
-            }, receiveValue: { item in
-                XCTAssertEqual(item.id, 1)
-                expectation.fulfill()
-            })
-            .store(in: &cancellables)
-        }
-        
-    }
+//    func testNetworkWithExpectionLoading() throws {
+//        let expectation = XCTestExpectation(description: "calling network")
+//        Task {
+//            let nw: NetworkManager<Product> = NetworkManager(apiHandler: MockAPIHandler(), responseHandler: MockResponseHandler())
+//            let t: AnyPublisher<Product, any Error> = await nw.getData(urlstr: "https://dummyjson.com/products/1")
+//            t.sink(receiveCompletion: { error in
+//                print(error)
+//            }, receiveValue: { item in
+//                XCTAssertEqual(item.id, 1)
+//                expectation.fulfill()
+//            })
+//            .store(in: &cancellables)
+//        }
+//
+//    }
     
     func testNetworkSuccess() throws {
-        let expectation = XCTestExpectation(description: "calling network")
-        Task {
-            let nw: NetworkManager<Product> = NetworkManager(apiHandler: MockAPIHandler(), responseHandler: MockResponseHandler())
-            let t: AnyPublisher<Product, any Error> = await nw.getData(urlstr: "https://dummyjson.com/products/1")
-            let vsyp = ValueSpy(publisher: t)
-            XCTAssertEqual(vsyp.products.first?.id ?? 0, 1)
-            expectation.fulfill()
-        }
-        wait(for: [expectation], timeout: 10)
+        let nw: NetworkManager<Product> = NetworkManager(apiHandler: MockAPIHandler(), responseHandler: MockResponseHandler())
+        let t: Future<Product, Error> = nw.getData(urlstr: "https://dummyjson.com/products/1")
+        let vsyp: ValueSpy = ValueSpy(publisher: t)
+        XCTAssertEqual(vsyp.products.first?.id ?? 0, 1)
     }
     
     func testNetworkError() throws {
-        let expectation = XCTestExpectation(description: "calling network")
-        Task {
-            let mockAPI = MockAPIHandler()
-            mockAPI.errorMode = .allError
-            let nw: NetworkManager<Product> = NetworkManager(apiHandler: mockAPI, responseHandler: MockResponseHandler())
-            let t: AnyPublisher<Product, any Error> = await nw.getData(urlstr: "https://dummyjson.com/products/1")
-            let vsyp = ValueSpy(publisher: t)
-            XCTAssertNil(vsyp.products.first)
-            expectation.fulfill()
-        }
-        wait(for: [expectation], timeout: 10)
+        let mockAPI = MockAPIHandler()
+        mockAPI.errorMode = .allError
+        let nw: NetworkManager<Product> = NetworkManager(apiHandler: mockAPI, responseHandler: MockResponseHandler())
+        let t: Future<Product, Error> = nw.getData(urlstr: "https://dummyjson.com/products/1")
+        let vsyp: ValueSpy = ValueSpy(publisher: t)
+        XCTAssertNil(vsyp.products.first)
     }
 
 }
@@ -52,10 +42,10 @@ final class NetworkWithCombineTests: XCTestCase {
 
 class MockAPIHandler: APIHandlerProtocol {
     
-    
     var errorMode: NetworkError?
     var passthrough = PassthroughSubject<Data, any Error>()
-    func callAPI(url: URL) async -> AnyPublisher<Data, Error> {
+    
+    func callAPI(url: URL) -> AnyPublisher<Data, Error> {
         let helper = TestHelper()
         if let errorMode = errorMode {
             passthrough.send(completion: .failure(errorMode))
@@ -63,20 +53,13 @@ class MockAPIHandler: APIHandlerProtocol {
         }
         return helper.loadData(fileName: "product")
     }
-    
-    
 }
 
 class MockResponseHandler: ResponseHandlerProtocol {
-    var cancel = [AnyCancellable]()
-    func parseResponse<T: Codable>(from publisher: AnyPublisher<Data, Error>) -> AnyPublisher<T, any Error> {
-        let v = publisher
-            .decode(type: T.self, decoder: JSONDecoder())
-            .eraseToAnyPublisher()
-        
-        return v
-    }
     
+    func parseResponse<T>(data: Data) -> T? where T : Decodable, T : Encodable {
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
     
 }
 
@@ -113,19 +96,16 @@ class TestHelper {
     
 }
 
-protocol VSpy {
-    associatedtype Item
-    
-}
-class ValueSpy<T: Codable>: VSpy {
-    typealias Item = T
+class ValueSpy {
     var cancellable: AnyCancellable?
-    var products = [T]()
-    init(publisher: AnyPublisher<T, any Error>) {
-        cancellable = publisher.sink { status in
-            
-        } receiveValue: { [weak self] product in
-            self?.products.append(product)
-        }
+    var products = [Product]()
+    init(publisher: Future<Product, Error>) {
+        cancellable = publisher
+            .sink { status in
+                
+            } receiveValue: { [weak self] product in
+                print(product)
+                self?.products.append(product)
+            }
     }
 }
