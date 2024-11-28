@@ -6,6 +6,8 @@ public enum NetworkError: Error {
     case allError
     case invalidUrl
     case jsonParsingFailed
+    case serverError(statusCode: Int)
+    case unknownError
 }
 
 public protocol NetworkManagerProtocol {
@@ -15,8 +17,9 @@ public protocol NetworkManagerProtocol {
 public protocol APIHandlerProtocol {
     func callAPI(url: URL) -> AnyPublisher<Data, Error>
 }
+
 public protocol ResponseHandlerProtocol {
-    func parseResponse<T: Codable>(data: Data) -> T?
+    func parseResponse<T: Codable>(data: Data) -> Result<T, Error>
 }
 
 // MARK: - Concrete
@@ -38,15 +41,18 @@ public class NetworkManager<T: Codable>: NetworkManagerProtocol {
             }
             let data = self.apiHandler.callAPI(url: url)
             data.sink { completion in
-                if case .failure(let error) = completion {
-                    return promise(.failure(error))
+                switch completion {
+                case .failure(let error):
+                    promise(.failure(error))
+                case .finished:
+                    break
                 }
             } receiveValue: { data in
-                // Caller must provide T as its generic class
-                if let response: T = self.responseHandler.parseResponse(data: data) {
-                    return promise(.success(response))
-                } else {
-                    return promise(.failure(NetworkError.jsonParsingFailed))
+                switch self.responseHandler.parseResponse(data: data) {
+                case .success(let response):
+                    promise(.success(response))
+                case .failure(let error):
+                    promise(.failure(error))
                 }
             }
             .store(in: &self.cancellables)
@@ -54,35 +60,42 @@ public class NetworkManager<T: Codable>: NetworkManagerProtocol {
     }
 }
 
-
 public class APIHandler: APIHandlerProtocol {
     
-    public init() {
-        
-    }
+    public init() {}
 
     public func callAPI(url: URL) -> AnyPublisher<Data, Error> {
         return URLSession.shared.dataTaskPublisher(for: url)
-                .tryMap { (data: Data, response: URLResponse) in
-                    if let response = response as? HTTPURLResponse, (200...299).contains(response.statusCode) {
+            .tryMap { (data: Data, response: URLResponse) in
+                if let httpResponse = response as? HTTPURLResponse {
+                    switch httpResponse.statusCode {
+                    case 200...299:
                         return data
-                    } else {
-                        throw NetworkError.allError
+                    case 400...499:
+                        throw NetworkError.serverError(statusCode: httpResponse.statusCode)
+                    case 500...599:
+                        throw NetworkError.serverError(statusCode: httpResponse.statusCode)
+                    default:
+                        throw NetworkError.unknownError
                     }
+                } else {
+                    throw NetworkError.unknownError
                 }
-                .eraseToAnyPublisher()
-        
+            }
+            .eraseToAnyPublisher()
     }
-    
 }
 
 public class ResponseHandler: ResponseHandlerProtocol {
     
-    public init() {
-        
-    }
+    public init() {}
     
-    public func parseResponse<T: Codable>(data: Data) -> T? {
-        return try? JSONDecoder().decode(T.self, from: data)
+    public func parseResponse<T: Codable>(data: Data) -> Result<T, Error> {
+        do {
+            let decodedData = try JSONDecoder().decode(T.self, from: data)
+            return .success(decodedData)
+        } catch {
+            return .failure(NetworkError.jsonParsingFailed)
+        }
     }
 }
