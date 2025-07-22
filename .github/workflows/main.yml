@@ -1,0 +1,33 @@
+name: Build Swift Library for iOS
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build iOS Library
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Xcode version
+        run: sudo xcode-select -s /Applications/Xcode_15.0.app
+        # You can list available Xcode versions using 'ls /Applications | grep Xcode'
+
+      - name: Install dependencies (SPM)
+        run: swift package resolve
+        # For CocoaPods, replace with: pod install
+
+      - name: Build library for iOS
+        run: |
+          xcodebuild \
+            -scheme YourLibraryScheme \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            clean build \
+            CODE_SIGNING_ALLOWED=NO
